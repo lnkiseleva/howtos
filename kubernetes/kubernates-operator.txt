@@ -1,0 +1,233 @@
+Создание оператора Kubernetes, который копирует Secret из одного неймспейса в другие.
+Для создания оператора используем kubebuilder
+Установить kind, kubectl
+ОС Ubuntu
+
+Создание оператора
+
+1. Создать и инициализировать проект
+mkdir -p secretsync
+cd secretsync
+kubebuilder init --domain example.com --repo=example.com/operator
+kubebuilder create api --group apps --version v1 --kind SecretSync
+На вопросы ответить y
+INFO Create Resource [y/n]                        
+y
+INFO Create Controller [y/n]                      
+y
+
+2. Добавить поля Spec и Status для нового CRD, для этого в файле secretsync_types.go отредактировать структуры
+type SecretSyncSpec struct {
+	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
+	// Important: Run "make" to regenerate code after modifying this file
+
+	SourceNamespace       string   `json:"sourceNamespace"`
+	DestinationNamespaces []string `json:"destinationNamespaces"`
+	SecretName            string   `json:"secretName"`
+}
+
+type SecretSyncStatus struct {
+	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
+	// Important: Run "make" to regenerate code after modifying this file
+	LastSyncTime metav1.Time `json:"lastSyncTime"`
+}
+
+3. Сгенерировать манифест для нового CRD
+make manifests
+
+4. Добавить новый CRD в kubernetes
+make install
+
+5. Заполнить манифест для создания экземпляра нового CRD, отредактировать файл apps_v1_secretsync.yaml (если не указать неймспейс, то будет неймспейс из current-context)
+apiVersion: apps.example.com/v1
+kind: SecretSync
+metadata:
+  labels:
+    app.kubernetes.io/name: secretsync
+    app.kubernetes.io/instance: secretsync-sample
+    app.kubernetes.io/part-of: secretsync
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: secretsync
+  name: secretsync-sample
+spec:
+  sourceNamespace: "default"
+  destinationNamespaces: ["production", "development"]
+  secretName: "example-secret"
+
+6. Добавить объект нового типа secretsync в kubernetes
+kubectl apply -f config/samples/apps_v1_secretsync.yaml
+
+7. Добавить оператору права на секреты, для этого добавить в файле secretsync_controller.go новую строчку там, где все rbac
+//+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
+
+8. Написать логику работы оператора, для этого отредактировать метод Reconcile в файле secretsync_controller.go (максимально писать лог)
+corev1 "k8s.io/api/core/v1"
+metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+func (r *SecretSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := log.FromContext(ctx).WithValues("secretsync", req.NamespacedName)
+	// Fetch the SecretSync instance
+	secretSync := &appsv1.SecretSync{}
+	if err := r.Get(ctx, req.NamespacedName, secretSync); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	// Fetch the source Secret
+	sourceSecret := &corev1.Secret{}
+	sourceSecretName := types.NamespacedName{
+		Namespace: secretSync.Spec.SourceNamespace,
+		Name:      secretSync.Spec.SecretName,
+	}
+	if err := r.Get(ctx, sourceSecretName, sourceSecret); err != nil {
+		log.Error(err, "Unable to get source secret", "SecretName", secretSync.Spec.SecretName, "SourceNamespace", secretSync.Spec.SourceNamespace)
+		return ctrl.Result{}, err
+	}
+	log.Info("Got source Secret in source namespace", "SecretName", secretSync.Spec.SecretName, "SourceNamespace", secretSync.Spec.SourceNamespace)
+
+	// Create or Update the destination Secrets in the target namespaces
+	for _, destinationSecretNamespace := range secretSync.Spec.DestinationNamespaces {
+		destinationSecret := &corev1.Secret{}
+		destinationSecretName := types.NamespacedName{
+			Namespace: destinationSecretNamespace,
+			Name:      secretSync.Spec.SecretName,
+		}
+		log.Info("Looking for Secret in destination namespace", "Namespace", destinationSecretNamespace, "SecretName", secretSync.Spec.SecretName)
+		if err := r.Get(ctx, destinationSecretName, destinationSecret); err != nil {
+			if errors.IsNotFound(err) {
+				log.Info("Creating Secret in destination namespace", "Namespace", destinationSecretNamespace)
+				destinationSecret = &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      secretSync.Spec.SecretName,
+						Namespace: destinationSecretNamespace,
+					},
+					Data: sourceSecret.Data, // Copy data from source to destination
+				}
+				if err := r.Create(ctx, destinationSecret); err != nil {
+					return ctrl.Result{}, err
+				}
+			} else {
+				return ctrl.Result{}, err
+			}
+		} else {
+			log.Info("Updating Secret in destination namespace", "Namespace", destinationSecretNamespace)
+			destinationSecret.Data = sourceSecret.Data // Update data from source to destination
+			if err := r.Update(ctx, destinationSecret); err != nil {
+				log.Error(err, "Unable to update secretsync")
+				return ctrl.Result{}, err
+			}
+		}
+	}
+
+	secretSync.Status.LastSyncTime = metav1.Now()
+	if err := r.Status().Update(ctx, secretSync); err != nil {
+		log.Error(err, "Unable to update secretsync status")
+		return ctrl.Result{}, err
+	}
+	log.Info("Status secretsync updated", "LastSyncTime", secretSync.Status.LastSyncTime)
+
+	return ctrl.Result{}, nil
+}
+
+9. Собрать образ контроллера. 
+Можно образ положить в локальный докер (но потом нужно будет руками, скопировать в kubernetes) или в докер хаб (нужно быть залогиненным в hub.docker.com в командной строке через docker login, после билда сделать make docker-push IMG=secretsync:1.0.0). В данном случае используем локальный докер (поэтому обязательно указать номер версии, а не latest).
+make docker-build IMG=secretsync:1.0.0
+
+10. Проверить, что образ есть в лольканом докере
+elena@elena-ABC:~/secretsync$ docker image ls
+REPOSITORY                        TAG       IMAGE ID       CREATED              SIZE
+secretsync                        1.0.0     e0073fbcd2cb   About a minute ago   54.7MB
+
+11. Загрузить образ оператора в kind, чтобы его можно было использовать при установке оператора
+kind load docker-image secretsync:1.0.0
+
+12. Развернуть оператор в kubernetes
+make deploy IMG=secretsync:1.0.0
+
+Проверка работы оператора
+1. Создать неймспейсы, в которые будем копировать секрет
+kubectl create namespace development
+kubectl create namespace production
+
+2. Создать секрет
+kubectl create secret generic example-secret \
+    --from-literal=username=admin \
+    --from-literal=password='S!B\*d$zDsb='
+
+3. Проверить, что новый CRD создан (список crd доступен в любом неймспейсе, а для экземпляров при создании можем задать неймспейс)
+elena@elena-ABC:~/secretsync$ kubectl get crd
+NAME                              CREATED AT
+configmapsyncs.apps.example.com   2024-01-22T09:38:40Z
+secretsyncs.apps.example.com      2024-01-24T08:57:08Z
+
+4. Получить объекты с типом нового CRD
+elena@elena-ABC:~/secretsync$ kubectl get secretsync
+NAME                AGE
+secretsync-sample   3m
+
+5. Проверить, что в созданном объекте есть все поля Spec. Поля статуса появятся, когда опертор их заполнит и обновит.
+elena@elena-ABC:~/secretsync$ kubectl describe secretsync secretsync-sample
+Name:         secretsync-sample
+Namespace:    default
+Labels:       app.kubernetes.io/created-by=secretsync
+              app.kubernetes.io/instance=secretsync-sample
+              app.kubernetes.io/managed-by=kustomize
+              app.kubernetes.io/name=secretsync
+              app.kubernetes.io/part-of=secretsync
+Annotations:  <none>
+API Version:  apps.example.com/v1
+Kind:         SecretSync
+Metadata:
+  Creation Timestamp:  2024-01-25T08:15:30Z
+  Generation:          1
+  Resource Version:    505086
+  UID:                 62eeaafc-eed9-4f5e-ad06-4c847c0b0e09
+Spec:
+  Destination Namespaces:
+    production
+    development
+  Secret Name:       example-secret
+  Source Namespace:  default
+Events:              <none>
+
+6. Посмотреть под с контроллером оператора
+kubectl get pod -A
+NAMESPACE              NAME                                               READY   STATUS    RESTARTS       AGE
+secretsync-system      secretsync-controller-manager-655c4b8bf4-jknt4     2/2     Running   0              7m32s
+
+7. Проверить логи оператора
+kubectl logs secretsync-controller-manager-655c4b8bf4-jknt4 -n=secretsync-system
+
+8. Проверить, что секрет скопирован в неймспейсы
+elena@elena-ABC:~/secretsync$ kubectl get secret -A
+NAMESPACE     NAME             TYPE     DATA   AGE
+default       example-secret   Opaque   2      138m
+development   example-secret   Opaque   2      3m53s
+production    example-secret   Opaque   2      3m53s
+
+8. Если в логах есть ошибки, то можно их исправить и проверить работу оператора без деплоя перед тем, как собирать образ
+make run
+
+9. Откатить деплой оператора и CRD
+make undeploy
+
+Отладка
+
+1. Убедиться, что в папке ~/.kube есть файл config c конфигом kubernetes
+
+2. В VS Code при начале отладки по F5 можно добавить launch.json конфиг
+{
+    "version": "0.2.0",
+    "configurations": [      
+        {
+            "name": "Launch Package",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/cmd"
+        }
+    ]
+}
+
+3. Поставить брейкпойнт, например в Reconcile методе и начать отладку по F5 (Run/Start Debugging)
+
+
+

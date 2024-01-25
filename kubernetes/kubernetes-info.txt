@@ -1,0 +1,60 @@
+База:
+
+https://habr.com/ru/companies/flant/articles/583660/
+
+https://habr.com/ru/companies/flant/articles/544306/
+
+https://habr.com/ru/companies/flant/articles/427819/
+
+https://kubernetes.io/docs/concepts/extend-kubernetes/operator/
+
+Установить kind (go install), cubectl
+
+https://ourtube.stsoft.team/w/hbg7jN6WMBgGKTvVCsTdxJ (практика работы с kubectl и yaml)
+
+https://disk.yandex.ru/d/slA3BAZBSNTXTA/[Slurm (Слёрм)] Golang для инженеров (2022)/10 Операторы Kubernetes
+Дополнительно:
+
+https://habr.com/ru/companies/T1Holding/articles/767056/
+
+https://www.youtube.com/watch?v=hNLQ3tCP8jQ (база)
+
+https://habr.com/ru/articles/547682/ (практика работы с helm)
+
+https://www.youtube.com/watch?v=ThP-OEjpDZk&t=1522s&ab_channel=ADV-IT (практика работы с ingress)
+
+https://disk.yandex.ru/d/slA3BAZBSNTXTA/[Slurm (Слёрм)] Golang для инженеров (2022)/09 Паттерны в Kubernetes
+
+https://matthewpalmer.net/kubernetes-app-developer/articles/ultimate-configmap-guide-kubernetes.html (про ConfigMap )
+
+https://ealebed.github.io/posts/2018/знакомство-с-kubernetes-часть-10-неймспейсы-namespaces/ (про неймспейсы)
+
+https://iximiuz.com/en/posts/kubernetes-kind-load-docker-image/ (использование локального докер image в kind)
+
+https://book-v1.book.kubebuilder.io/basics/status_subresource (обновление статуса crd)
+
+https://kubernetes.io/docs/tasks/configmap-secret/managing-secret-using-config-file/ (создание secret)
+
+https://www.redhat.com/sysadmin/kubeconfig (про kubernetes конфиг)
+Примеры:
+
+https://github.com/zalando/postgres-operator
+
+https://git.stsoft.team/vbesedin/cored-operator
+
+Тестирование операторов
+
+https://netflix.github.io/chaosmonkey/
+
+https://chaostoolkit.org/
+
+Практика:
+
+Написать оператор, копирующий ConfigMap из одного неймспейса в другой
+
+Обновлять статус crd
+
+Написать оператор, копирующий Secret из одного неймспейса в другие
+
+https://habr.com/ru/companies/slurm/articles/779986/ (пример)
+
